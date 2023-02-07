@@ -122,8 +122,8 @@ class Model
 
   public:
   Model(int columnCount, int rowCount, int colorCount, int labelClasses) {
-    this-> columnCount = columnCount;
-    this-> rowCount = rowCount;
+    this->columnCount = columnCount;
+    this->rowCount = rowCount;
     this->colorCount = colorCount;
     this->labelClasses = labelClasses;
     // input
@@ -213,8 +213,8 @@ class Model
     cudaMalloc(&d_output, labelClasses * sizeof (float));
     cudaMalloc(&d_dOutput, labelClasses * sizeof (float));
 
-    initWeightsEdgeDetector(colorCount, colorCount);
-
+    initKernelWeightsRandomUniform(colorCount, colorCount);
+    initDenseWeightsRandom();
     // dense layer is matrix multiplaction
     // https://docs.nvidia.com/deeplearning/performance/dl-performance-fully-connected/index.html
     cublasCreate_v2(&cublas);
@@ -253,7 +253,7 @@ class Model
     cudaMemcpy(d_kernel, h_kernel, sizeof(h_kernel), cudaMemcpyHostToDevice);
   }
 
-  void initWeightsRandomUniform(int kernelCount, int channelCount)
+  void initKernelWeightsRandomUniform(int kernelCount, int channelCount)
   {
     float h_kernel[kernelCount][channelCount][3][3];
 
@@ -273,7 +273,62 @@ class Model
     cudaMemcpy(d_kernel, h_kernel, sizeof(h_kernel), cudaMemcpyHostToDevice);
   }
 
+  void initDenseWeightsRandom()
+  {
+    int valueCount = rowCount * columnCount * colorCount * labelClasses;
+    float* h_value = new float[valueCount];
 
+    for(int v = 0; v < valueCount; ++v)
+    {
+      float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
+
+      h_value[v] = r * 2.0 - 1.0;
+      // printf("%.2f ", h_value[v]);
+    }
+    cudaMemcpy(d_denseWeights, h_value, valueCount * sizeof(float), cudaMemcpyHostToDevice);
+  }
+
+  void printNetwork()
+  {
+    printKernel();
+    printDense();
+  }
+
+  void printKernel()
+  {
+    float h_kernel[colorCount][colorCount][3][3];
+    cudaMemcpy(h_kernel, d_kernel, sizeof(h_kernel), cudaMemcpyDeviceToHost);
+
+    for (int kernel = 0; kernel < colorCount; ++kernel) {
+      for (int channel = 0; channel < colorCount; ++channel) {
+        for (int row = 0; row < 3; ++row) {
+          for (int column = 0; column < 3; ++column) {
+            printf("%.3f ", h_kernel[kernel][channel][row][column]);
+          }
+          printf("\n");
+        }
+      }
+    }
+  }
+
+  void printDense()
+  {
+    int valueCount = rowCount * columnCount * colorCount * labelClasses;
+    float* h_value = new float[valueCount];
+
+    cudaMemcpy(h_value, d_denseWeights, valueCount * sizeof(float), cudaMemcpyDeviceToHost);
+
+    for(int v = 0; v < valueCount; ++v)
+      printf("%.2f ", h_value[v]);
+//    for(int l = 0; l < labelClasses; ++l)
+//    {
+//      for(int r = 0; r < rowCount; ++r)
+//      for(int c = 0; c < columnCount; ++c)
+//      for(int k = 0; k < colorCount; ++k)
+//        printf("%.2f ", h_value[c * rowCount * colorCount * labelClasses + r * colorCount * labelClasses + k * labelClasses + l]);
+//      printf("\n");
+//    }
+  }
 
   void deleteModel()
   {
@@ -383,12 +438,21 @@ class Model
 
   }
 
-  void forwardPass(float* imageData)
+  void forwardPass()
   {
 
     // forward pass through convolution
-    cudaMemcpy(d_input, imageData, rowCount * columnCount * colorCount * sizeof(float), cudaMemcpyHostToDevice);
+    // cudaMemcpy(d_input, imageData, rowCount * columnCount * colorCount * sizeof(float), cudaMemcpyHostToDevice);
 //    cudaMemset(d_output, 0, image_bytes);
+
+    // DEBUG
+    float* h_input = new float[rowCount * columnCount * colorCount * sizeof(float)];
+
+    cudaMemcpy(h_input, d_input, rowCount * columnCount * colorCount * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // for(int v = 0; v < rowCount * columnCount * colorCount; ++v) printf("%.2f ", h_input[v]);
+    // printf("\n");
+    // END DEBUG
 
     const float alpha = 1, beta = 0;
     checkCUDNN(cudnnConvolutionForward(cudnn,
@@ -404,25 +468,45 @@ class Model
                                        &beta,
                                        output_descriptor,
                                        d_convolution_output));
+
+    // DEBUG
+    float* h_convolution_output = new float[rowCount * columnCount * colorCount * sizeof(float)];
+
+    cudaMemcpy(h_convolution_output, d_convolution_output, rowCount * columnCount * colorCount * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // for(int v = 0; v < rowCount * columnCount * colorCount; ++v) printf("%.2f ", h_convolution_output[v]);
+    // printf("\n");
+    // END DEBUG
+
+
     // dense layer is matrix multiplication.
     // https://docs.nvidia.com/deeplearning/performance/dl-performance-fully-connected/index.htmls
     cublasSgemm('n','n',1,labelClasses, columnCount * rowCount * colorCount,1,d_convolution_output,1,d_denseWeights,columnCount * rowCount * colorCount,0,d_activation,1);
 
+    // DEBUG
+    float* h_activation = new float[labelClasses* sizeof(float)];
+
+    cudaMemcpy(h_activation, d_activation, labelClasses * sizeof(float), cudaMemcpyDeviceToHost);
+
+    // for(int v = 0; v < labelClasses; ++v) printf("%.2f ", h_activation[v]);
+    // END DEBUG
     // Perform the forward pass of the activation
     checkCUDNN(cudnnActivationForward(cudnn,
                                       activation_descriptor,
                                       &alpha,
                                       output_descriptor,
-                                      d_output,
+                                      d_activation,
                                       &beta,
                                       output_descriptor,
                                       d_output));
 
 
     // COPY MEMORY TO HOST
-    h_output = new float[columnCount * rowCount * colorCount * sizeof(float)];
-    cudaMemcpy(h_output, d_output, columnCount * rowCount * colorCount * sizeof(float), cudaMemcpyDeviceToHost);
+    h_output = new float[labelClasses* sizeof(float)];
+    cudaMemcpy(h_output, d_output, labelClasses * sizeof(float), cudaMemcpyDeviceToHost);
 
+    // DEBUG
+    // for(int v = 0; v < labelClasses; ++v) printf("%.2f ", h_output[v]);
     // free memory and copy info back to host
 
   }
@@ -440,7 +524,18 @@ class Model
         h_dOutput[l] = 1.0 - h_output[l];
       }
     }
-
+//    printf("loss %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f",
+//           h_dOutput[0],
+//           h_dOutput[1],
+//           h_dOutput[2],
+//           h_dOutput[3],
+//           h_dOutput[4],
+//           h_dOutput[5],
+//           h_dOutput[6],
+//           h_dOutput[7],
+//           h_dOutput[8],
+//           h_dOutput[9]
+//           );
     cudaMemcpy(d_dOutput, h_dOutput, labelClasses * sizeof(float), cudaMemcpyHostToDevice);
   }
 
@@ -452,6 +547,7 @@ class Model
     for(int l = 0; l < labelClasses; l++)
     {
       float probability = h_output[l];
+
       if(probability > highestProbability)
       {
         highestProbability = probability;
@@ -461,10 +557,124 @@ class Model
     return highestLabel;
   }
 
+  void updateWeights(float learningRate)
+  {
+    updateKernelWeights(learningRate, colorCount, colorCount);
+    updateDenseWeights(learningRate);
+  }
+
+  void updateKernelWeights(float learningRate, int kernelCount, int colorCount)
+  {
+    int valueCount = 3 * 3 * kernelCount * colorCount;
+
+    cublasSaxpy(valueCount, learningRate, d_dKernel, 1, d_kernel, 1);
+  }
+
+  void updateDenseWeights(float learningRate)
+  {
+    int valueCount = rowCount * columnCount * colorCount * labelClasses;
+
+    cublasSaxpy(valueCount, learningRate, d_dDenseWeights, 1, d_denseWeights, 1);
+  }
+
+  uint8_t trainStep(uint8_t* imageData, uint8_t label)
+  {
+    set_image_float(imageData);
+
+    forwardPass();
+
+    computeLoss(label);
+
+    backwardPass();
+    updateWeights(.1);
+
+    return outputToPrediction();
+  }
+
+  uint8_t predictStep(uint8_t* imageData)
+  {
+    set_image_float(imageData);
+
+    forwardPass();
+
+    uint8_t prediction = outputToPrediction();
+    return prediction;
+  }
+
+  void set_image_float(uint8_t* imageData)
+  {
+    // used to cast to float
+    float* h_imageData = (float*) malloc(rowCount * columnCount * colorCount * sizeof(float));
+
+    for(int x =0; x < columnCount; ++x)
+      for(int y=0; y < rowCount; ++y)
+        for(int c=0; c < colorCount; ++c)
+          h_imageData[
+              y * columnCount * colorCount + x * colorCount + c] =
+              ((float) imageData[
+                  y * columnCount * colorCount + x * colorCount + c]) / 255.0;
+
+
+    cudaMemcpy((void*) d_input, (void*) h_imageData, rowCount*colorCount*columnCount * sizeof(float), cudaMemcpyHostToDevice);
+
+    free(h_imageData);
+    return;
+  }
+
+  int imageSize()
+  {
+    return rowCount * columnCount * colorCount;
+  }
+
+  void trainEpoch(uint8_t* imageData, int imageCount, uint8_t* correct, int epochCount)
+  {
+    for(int i = 0; i < imageCount; ++i)
+      trainStep(imageData + imageSize() * i, correct[i]);
+  }
+
+  void trainEpochs(uint8_t* imageData, int imageCount, uint8_t* correct, int epochCount)
+  {
+    for(int n=0; n < epochCount; ++n)
+      trainEpoch(imageData, imageCount, correct, epochCount);
+  }
+
+  void predictAll(uint8_t* imageData, int imageCount, uint8_t* results)
+  {
+    for(int i = 0; i < imageCount; ++i)
+      results[i] = predictStep(imageData + imageSize() * i);
+  }
+
+  float computeAccuracy(uint8_t* imageData, int imageCount, uint8_t* correct)
+  {
+    uint8_t* predictions = new uint8_t[imageCount];
+
+    predictAll(imageData, imageCount, predictions);
+
+    int correctCount = 0;
+
+    for(int i = 0; i < imageCount; ++i)
+      correctCount += predictions[i] == correct[i];
+
+    return ((float) correctCount) / ((float) imageCount);
+  }
 };
 
 void run(int imageCount, int columnCount, int rowCount, int colorCount, int labelClasses, uint8_t* imageData, uint8_t* labelData, uint8_t* predictionData)
 {
+  Model model(columnCount, rowCount, colorCount, labelClasses);
+
+  std::cout << "output " << (int) model.predictStep(imageData) << std::endl;
+
+  // return;
+  for(int m = 0; m < 11; ++m)
+  {
+    model.trainEpoch(imageData, imageCount, labelData, 1);
+    float accuracy = model.computeAccuracy(imageData, imageCount, labelData);
+    printf("Accuracy %.6f\n", accuracy);
+  }
+
+
+  return;
   float* h_imageData = (float*) malloc(imageCount * rowCount * columnCount * colorCount * sizeof(float));
 
   for(int i = 0; i < imageCount; ++i)
@@ -480,15 +690,16 @@ void run(int imageCount, int columnCount, int rowCount, int colorCount, int labe
   cudaMalloc(&d_imageData, sizeof(h_imageData));
   cudaMemcpy((void*) d_imageData, (void*) h_imageData, imageCount*rowCount*colorCount*columnCount * sizeof(float), cudaMemcpyHostToDevice);
 
-  Model model(columnCount, rowCount, colorCount, labelClasses);
 
-  model.forwardPass(d_imageData);
+  model.forwardPass();
 
   int prediction = model.outputToPrediction();
 
   model.computeLoss(labelData[0]);
 
   model.backwardPass();
+  model.updateWeights(.1);
+
   return;
 
 }
@@ -517,7 +728,7 @@ int main(int argc, char *argv[])
       printf("Syntax: main.exe inputpath outputpath");
       return 1;
   }
-
+  cudaDeviceReset();
   // cudaError_t err = cudaDeviceReset();
   // hardcoded image data because c++ is acting difficult
   int32_t imageCount = 60000;
