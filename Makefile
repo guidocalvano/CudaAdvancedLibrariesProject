@@ -29,7 +29,7 @@ data:
 	curl -s http://yann.lecun.com/exdb/mnist/train-labels-idx1-ubyte.gz | gzip -d > data/input/training_label.idx1
 
 proof:
-	echo Not done yet
+	tar -czvf proof.tar.gz ./data/output
 
 clean:
 	rm -f ./bin/main.exe

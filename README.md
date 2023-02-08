@@ -7,13 +7,19 @@ machine learning projects I use on a daily basis.
 The modules I intend to understand involve making a prediction given a model, and improving a prediction given training
 data. To understand prediction I must first understand model construction. To understand training I must first 
 understand prediction.
-The simplest way to undestand all three topics is to construct the simplest model that can make predictions on the 
-simplest data set, and then learn from its mistakes. A commonly used data set for this goal contains labeled handwritten
-numbers, and is called mnist. The simplest cudnn model is a single layer feedforward neural network with a rectified
-linear activation function.
-Because the focus is on understanding the use of the modules I will not spend time on good machine learning practices;
-I will not split the data set to improve generalization and I will not measure performance, because they will not 
-improve understanding of how to use the modules.
+The simplest way to understand all three topics is to construct a model that can make predictions on the 
+simplest data set, and then learn from its mistakes. I chose a model that contains the most important building blocks
+of neural networks; A convolution layer, a dense layer and an activation function. 
+A commonly used data set fitting this goal contains labeled handwritten numbers, and is called mnist. 
+
+Because the focus is on understanding the use of these modules I will not spend time on good machine learning 
+practices; I will not split the data set to improve generalization because it is not relevant to understanding use
+of these models. I will merely measure if accuracy increases over during training, and output it to command line
+for debugging purposes.
+
+The proof is a set of images that show the predictions of the neural net. Accuracy is low (slightly over
+80%), but enough to prove that backpropagation is implemented correctly. Each image file name has the index of the 
+image in the trainingset, the predicted label and weather it is correct or wrong.
 
 To install dependencies run:
 ```shell

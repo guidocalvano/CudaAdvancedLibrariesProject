@@ -35,13 +35,14 @@ void bytesToGreyImageMat(Mat& img, int columns, int rows, uint8_t* imageData)
 }
 
 
-void savePrediction(std::string path, unsigned int imageIndex, Mat img, int label)
+void savePrediction(std::string path, unsigned int imageIndex, Mat img, int predictedLabel, int label)
 {
   std::string filePathName = path +
       std::string("/image_") +
       std::to_string(imageIndex) +
       "_label_" +
-      std::to_string(label) +
+      std::to_string(predictedLabel) +
+      (label == predictedLabel ? std::string("_correct") : std::string ("_wrong")) +
       ".png";
   imwrite(filePathName, img);
 }
@@ -51,6 +52,7 @@ void savePredictions(std::string output_path,
                      int rows,
                      int columns,
                      uint8_t* imageData,
+                     uint8_t* predictedLabelData,
                      uint8_t* labelData)
 {
   Mat img;
@@ -58,7 +60,7 @@ void savePredictions(std::string output_path,
   for(int i = 0; i < imageCount; ++i)
   {
     bytesToGreyImageMat(img, columns, rows, imageData + 28 * 28 * i);
-    savePrediction(output_path, i, img, *(labelData + i));
+    savePrediction(output_path, i, img, *(predictedLabelData + i), *(labelData + i));
   }
 }
 
@@ -358,7 +360,8 @@ class Model
   void backwardPass()
   {
     const float alpha = 1, beta = 0;
-
+    // NORMALLY I WOULD CHECK THE STATUS OF CALLS AND HANDLE THEM PROPERLY
+    // BUT THIS IS NOT RELEVANT FOR THE GOAL OF THIS PROJECT
     // activation backprop
     cudnnStatus_t status = cudnnActivationBackward(
                                          cudnn,
@@ -442,17 +445,6 @@ class Model
   {
 
     // forward pass through convolution
-    // cudaMemcpy(d_input, imageData, rowCount * columnCount * colorCount * sizeof(float), cudaMemcpyHostToDevice);
-//    cudaMemset(d_output, 0, image_bytes);
-
-    // DEBUG
-    float* h_input = new float[rowCount * columnCount * colorCount * sizeof(float)];
-
-    cudaMemcpy(h_input, d_input, rowCount * columnCount * colorCount * sizeof(float), cudaMemcpyDeviceToHost);
-
-    // for(int v = 0; v < rowCount * columnCount * colorCount; ++v) printf("%.2f ", h_input[v]);
-    // printf("\n");
-    // END DEBUG
 
     const float alpha = 1, beta = 0;
     checkCUDNN(cudnnConvolutionForward(cudnn,
@@ -469,27 +461,11 @@ class Model
                                        output_descriptor,
                                        d_convolution_output));
 
-    // DEBUG
-    float* h_convolution_output = new float[rowCount * columnCount * colorCount * sizeof(float)];
-
-    cudaMemcpy(h_convolution_output, d_convolution_output, rowCount * columnCount * colorCount * sizeof(float), cudaMemcpyDeviceToHost);
-
-    // for(int v = 0; v < rowCount * columnCount * colorCount; ++v) printf("%.2f ", h_convolution_output[v]);
-    // printf("\n");
-    // END DEBUG
-
 
     // dense layer is matrix multiplication.
     // https://docs.nvidia.com/deeplearning/performance/dl-performance-fully-connected/index.htmls
     cublasSgemm('n','n',1,labelClasses, columnCount * rowCount * colorCount,1,d_convolution_output,1,d_denseWeights,columnCount * rowCount * colorCount,0,d_activation,1);
 
-    // DEBUG
-    float* h_activation = new float[labelClasses* sizeof(float)];
-
-    cudaMemcpy(h_activation, d_activation, labelClasses * sizeof(float), cudaMemcpyDeviceToHost);
-
-    // for(int v = 0; v < labelClasses; ++v) printf("%.2f ", h_activation[v]);
-    // END DEBUG
     // Perform the forward pass of the activation
     checkCUDNN(cudnnActivationForward(cudnn,
                                       activation_descriptor,
@@ -504,10 +480,6 @@ class Model
     // COPY MEMORY TO HOST
     h_output = new float[labelClasses* sizeof(float)];
     cudaMemcpy(h_output, d_output, labelClasses * sizeof(float), cudaMemcpyDeviceToHost);
-
-    // DEBUG
-    // for(int v = 0; v < labelClasses; ++v) printf("%.2f ", h_output[v]);
-    // free memory and copy info back to host
 
   }
 
@@ -524,18 +496,7 @@ class Model
         h_dOutput[l] = 1.0 - h_output[l];
       }
     }
-//    printf("loss %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f %.6f",
-//           h_dOutput[0],
-//           h_dOutput[1],
-//           h_dOutput[2],
-//           h_dOutput[3],
-//           h_dOutput[4],
-//           h_dOutput[5],
-//           h_dOutput[6],
-//           h_dOutput[7],
-//           h_dOutput[8],
-//           h_dOutput[9]
-//           );
+
     cudaMemcpy(d_dOutput, h_dOutput, labelClasses * sizeof(float), cudaMemcpyHostToDevice);
   }
 
@@ -673,35 +634,7 @@ void run(int imageCount, int columnCount, int rowCount, int colorCount, int labe
     printf("Accuracy %.6f\n", accuracy);
   }
 
-
-  return;
-  float* h_imageData = (float*) malloc(imageCount * rowCount * columnCount * colorCount * sizeof(float));
-
-  for(int i = 0; i < imageCount; ++i)
-    for(int x =0; x < columnCount; ++x)
-      for(int y=0; y < rowCount; ++y)
-        for(int c=0; c < colorCount; ++c)
-          h_imageData[i * columnCount * rowCount * colorCount +
-                  y * columnCount * colorCount + x * colorCount + c] =
-                      (float) imageData[i * columnCount * rowCount * colorCount +
-                      y * columnCount * colorCount + x * colorCount + c];
-
-  float* d_imageData{nullptr};
-  cudaMalloc(&d_imageData, sizeof(h_imageData));
-  cudaMemcpy((void*) d_imageData, (void*) h_imageData, imageCount*rowCount*colorCount*columnCount * sizeof(float), cudaMemcpyHostToDevice);
-
-
-  model.forwardPass();
-
-  int prediction = model.outputToPrediction();
-
-  model.computeLoss(labelData[0]);
-
-  model.backwardPass();
-  model.updateWeights(.1);
-
-  return;
-
+  model.predictAll(imageData, imageCount, predictionData);
 }
 
 void loadTrainingData(uint8_t* imageData, uint8_t* labelData)
@@ -712,13 +645,6 @@ void loadTrainingData(uint8_t* imageData, uint8_t* labelData)
   int labelOffset = 2 * 4;
    fileToBytes("./data/input/training_image.idx3", imageData, imageOffset);
    fileToBytes("./data/input/training_label.idx1", labelData, labelOffset);
-
-//
-//   std::cout << " image byte vector size "<< imageByteVector.size() - imageOffset << std::endl;
-//   std::cout << " label byte vector size "<< labelByteVector.size() - labelOffset << std::endl;
-//
-//   std::memcmp(imageData, imageByteVector.data() + imageOffset, imageByteVector.size() - imageOffset);
-//   std::memcmp(labelData, labelByteVector.data() + labelOffset, labelByteVector.size() - labelOffset);
 }
 
 
@@ -748,9 +674,11 @@ int main(int argc, char *argv[])
 
   run(imageCount, columns, rows, colorCount, labelClasses, imageData, labelData, predictionData);
 
-  savePredictions(std::string("./data/output"), imageCount, rows, columns, imageData, labelData);//, labelClasses);
-  // err = cudaDeviceReset();
+  savePredictions(std::string("./data/output"), imageCount, rows, columns, imageData, predictionData, labelData);
+
   delete imageData;
   delete labelData;
   delete predictionData;
+
+  cudaDeviceReset();
 }
