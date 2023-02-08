@@ -4,9 +4,11 @@
 To pass the gpu programming specialization course from John Hopkins university on coursera I am doing this capstone 
 project. My goal is to understand the correct use of modules in the CuDNN library that is used extensively in
 machine learning projects I use on a daily basis.
+
 The modules I intend to understand involve making a prediction given a model, and improving a prediction given training
 data. To understand prediction I must first understand model construction. To understand training I must first 
 understand prediction.
+
 The simplest way to understand all three topics is to construct a model that can make predictions on the 
 simplest data set, and then learn from its mistakes. I chose a model that contains the most important building blocks
 of neural networks; A convolution layer, a dense layer and an activation function. 
