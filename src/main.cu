@@ -16,7 +16,6 @@ void fileToBytes(std::string inputPathName, uint8_t* byteArray, int offset)
 
 //get length of file
   uintmax_t size = file_size(inputPathName);
-  printf("Size %u: ", size);
   for(int i = 0; i < offset; ++i) begin++;
 
   std::copy(begin, end, byteArray);
@@ -130,6 +129,29 @@ class Model
     this->labelClasses = labelClasses;
     // input
     cudnnCreate(&cudnn);
+    initConvolutionLayer();
+    int image_bytes = colorCount * rowCount * columnCount * sizeof(float);
+
+    cudaMalloc(&d_input, image_bytes);
+    cudaMalloc(&d_dInput, image_bytes);
+
+    initDenseLayer();
+    cudaMalloc(&d_output, labelClasses * sizeof (float));
+    cudaMalloc(&d_dOutput, labelClasses * sizeof (float));
+
+    initKernelWeightsRandomUniform(colorCount, colorCount);
+    initDenseWeightsRandom();
+    // dense layer is matrix multiplaction
+    // https://docs.nvidia.com/deeplearning/performance/dl-performance-fully-connected/index.html
+    cublasCreate_v2(&cublas);
+
+    // ACTIVATION FUNCTION
+    initActivationFunction();
+  }
+
+  void initConvolutionLayer()
+  {
+
     checkCUDNN(cudnnCreateTensorDescriptor(&input_descriptor));
     checkCUDNN(cudnnSetTensor4dDescriptor(input_descriptor,
         /*format=*/CUDNN_TENSOR_NHWC,
@@ -196,11 +218,10 @@ class Model
 
     cudaMalloc(&d_workspace, workspace_bytes);
 
-    int image_bytes = colorCount * rowCount * columnCount * sizeof(float);
+  }
 
-    cudaMalloc(&d_input, image_bytes);
-    cudaMalloc(&d_dInput, image_bytes);
-
+  void initDenseLayer()
+  {
     cublasStatus status;
 
     status=cublasAlloc(rowCount*columnCount*colorCount, sizeof(float), (void**)&d_convolution_output);
@@ -212,16 +233,11 @@ class Model
     status=cublasAlloc(labelClasses,sizeof(float),(void**)&d_activation);
     status=cublasAlloc(labelClasses,sizeof(float),(void**)&d_dActivation);
 
-    cudaMalloc(&d_output, labelClasses * sizeof (float));
-    cudaMalloc(&d_dOutput, labelClasses * sizeof (float));
+  }
 
-    initKernelWeightsRandomUniform(colorCount, colorCount);
-    initDenseWeightsRandom();
-    // dense layer is matrix multiplaction
-    // https://docs.nvidia.com/deeplearning/performance/dl-performance-fully-connected/index.html
-    cublasCreate_v2(&cublas);
 
-    // ACTIVATION FUNCTION
+  void initActivationFunction()
+  {
     checkCUDNN(cudnnCreateActivationDescriptor(&activation_descriptor));
     checkCUDNN(cudnnSetActivationDescriptor(activation_descriptor,
         /*mode=*/CUDNN_ACTIVATION_SIGMOID,
@@ -285,7 +301,6 @@ class Model
       float r = static_cast <float> (rand()) / static_cast <float> (RAND_MAX);
 
       h_value[v] = r * 2.0 - 1.0;
-      // printf("%.2f ", h_value[v]);
     }
     cudaMemcpy(d_denseWeights, h_value, valueCount * sizeof(float), cudaMemcpyHostToDevice);
   }
@@ -322,17 +337,10 @@ class Model
 
     for(int v = 0; v < valueCount; ++v)
       printf("%.2f ", h_value[v]);
-//    for(int l = 0; l < labelClasses; ++l)
-//    {
-//      for(int r = 0; r < rowCount; ++r)
-//      for(int c = 0; c < columnCount; ++c)
-//      for(int k = 0; k < colorCount; ++k)
-//        printf("%.2f ", h_value[c * rowCount * colorCount * labelClasses + r * colorCount * labelClasses + k * labelClasses + l]);
-//      printf("\n");
-//    }
+
   }
 
-  void deleteModel()
+  ~Model()
   {
     delete[] h_output;
     cudaFree(d_kernel);
@@ -624,10 +632,8 @@ void run(int imageCount, int columnCount, int rowCount, int colorCount, int labe
 {
   Model model(columnCount, rowCount, colorCount, labelClasses);
 
-  std::cout << "output " << (int) model.predictStep(imageData) << std::endl;
-
   // return;
-  for(int m = 0; m < 11; ++m)
+  for(int m = 0; m < 2; ++m)
   {
     model.trainEpoch(imageData, imageCount, labelData, 1);
     float accuracy = model.computeAccuracy(imageData, imageCount, labelData);
